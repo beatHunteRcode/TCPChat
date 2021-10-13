@@ -1,0 +1,10 @@
+D:\Programming\С#\TCPChat\TCPClient\bin\Debug\TCPClient.exe.config
+D:\Programming\С#\TCPChat\TCPClient\bin\Debug\TCPClient.exe
+D:\Programming\С#\TCPChat\TCPClient\bin\Debug\TCPClient.pdb
+D:\Programming\С#\TCPChat\TCPClient\obj\Debug\TCPClient.csproj.AssemblyReference.cache
+D:\Programming\С#\TCPChat\TCPClient\obj\Debug\TCPClient.csproj.CoreCompileInputs.cache
+D:\Programming\С#\TCPChat\TCPClient\obj\Debug\TCPClient.exe
+D:\Programming\С#\TCPChat\TCPClient\obj\Debug\TCPClient.pdb
+D:\Programming\С#\TCPChat\TCPClient\bin\Debug\Newtonsoft.Json.dll
+D:\Programming\С#\TCPChat\TCPClient\bin\Debug\Newtonsoft.Json.xml
+D:\Programming\С#\TCPChat\TCPClient\obj\Debug\TCPClient.csproj.CopyComplete

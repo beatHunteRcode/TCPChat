@@ -1,0 +1,10 @@
+D:\Programming\С#\TCPChat\TCPChat\obj\Debug\TCPServer.csproj.AssemblyReference.cache
+D:\Programming\С#\TCPChat\TCPChat\obj\Debug\TCPServer.csproj.CoreCompileInputs.cache
+D:\Programming\С#\TCPChat\TCPChat\bin\Debug\Newtonsoft.Json.dll
+D:\Programming\С#\TCPChat\TCPChat\bin\Debug\Newtonsoft.Json.xml
+D:\Programming\С#\TCPChat\TCPChat\obj\Debug\TCPServer.csproj.CopyComplete
+D:\Programming\С#\TCPChat\TCPChat\bin\Debug\TCPServer.exe.config
+D:\Programming\С#\TCPChat\TCPChat\bin\Debug\TCPServer.exe
+D:\Programming\С#\TCPChat\TCPChat\bin\Debug\TCPServer.pdb
+D:\Programming\С#\TCPChat\TCPChat\obj\Debug\TCPServer.exe
+D:\Programming\С#\TCPChat\TCPChat\obj\Debug\TCPServer.pdb
