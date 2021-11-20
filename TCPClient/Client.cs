@@ -1,96 +1,263 @@
 ﻿using Newtonsoft.Json;
 using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Net;
 using System.Net.Sockets;
-using System.Runtime.Serialization.Formatters.Binary;
 using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
-using System.Xml.Serialization;
+using System.IO;
 
 namespace TCPClient
 {
-    class Client
+    public class Client
     {
-        static void Main(string[] args)
+
+        static Socket TCPSocket;
+        IPEndPoint TCPEndPoint;
+        readonly string ip;
+        readonly int port;
+
+        public Client(string ip, int port)
+        {
+            this.ip = ip;
+            this.port = port;
+            TCPEndPoint = new IPEndPoint(IPAddress.Parse(ip), port);
+        }
+
+        public void Run()
         {
             try
             {
-                const string ip = "127.0.0.1";
-                const int port = 0451;
-
-                Console.Write("Who are you?: ");
-                User clientUser = new User(Console.ReadLine());
-                User serverUser = new User();
-                IPEndPoint TCPEndPoint = new IPEndPoint(IPAddress.Parse(ip), port);
-
-                Socket TCPSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                Console.WriteLine("Connecting to the TCPChat...");
-                do
-                {
-                    try
-                    {
-
-                        TCPSocket.Connect(TCPEndPoint);
-                    }
-                    catch (SocketException)
-                    {
-                        Console.WriteLine("No adress to connect. Reconnecting...");
-                    }
-                }
-                while (!TCPSocket.Connected);
-
-                Console.WriteLine("Connected.");
-                Console.WriteLine($"Hi, {clientUser.Name}. Welcome to the TCPChat! Type 'exit()' to quit the TCPChat.");
-                Console.WriteLine("");
-                var data = new byte[256];
-                string json = JsonConvert.SerializeObject(clientUser);
-                data = Encoding.UTF8.GetBytes(json);
-                TCPSocket.Send(data);
-
-                Thread receiveThread = new Thread(() =>
-                {
-                    byte[] buffer = new byte[256];
-                    int bufferSize = 0;
-                    StringBuilder sb = new StringBuilder();
-                    while (true)
-                    {
-                        sb.Clear();
-                        Array.Clear(buffer, 0, buffer.Length);
-                        bufferSize = TCPSocket.Receive(buffer);
-                        sb.Append(Encoding.UTF8.GetString(buffer, 0, bufferSize));
-                        serverUser = JsonConvert.DeserializeObject<User>(sb.ToString());
-                        Console.WriteLine($"[{getCurrentTime()}] {serverUser.Name}: {serverUser.Message}");
-                    }
-                });
-                receiveThread.Start();
-
-                do
-                {
-                    clientUser.Message = Console.ReadLine();
-                    json = JsonConvert.SerializeObject(clientUser);
-                    data = Encoding.UTF8.GetBytes(json);
-                    TCPSocket.Send(data);
-                }
-                while (clientUser.Message != "exit()");
-                Console.WriteLine("Disconnected.");
-                TCPSocket.Shutdown(SocketShutdown.Both);
-                TCPSocket.Close();
-
+                EnterToServer();
+                CreateThreads();
             }
-            finally
+            catch(Exception e)
             {
+                Console.WriteLine(e.StackTrace);
                 Console.ReadKey();
             }
         }
 
-        private static string getCurrentTime()
+        private void SendMessage(Socket listener, Message message)
+        {
+            if (message.Type == MessageType.FILE)
+            {
+                string filePath = message.Text.Split(' ')[1];
+                byte[] sendingFile = File.ReadAllBytes(filePath);
+                message.AttachedFileName = filePath;
+                message.AttachedFileData = sendingFile;
+            }
+            string jsonString = JsonConvert.SerializeObject(message);
+            byte[] outcomingMain = Encoding.UTF8.GetBytes(jsonString);
+
+            Message messageWithLength = new Message(MessageType.LENGTH, null, message.UserName, outcomingMain.Length.ToString(), null, null);
+            string jsonLength = JsonConvert.SerializeObject(messageWithLength);
+            byte[] outcomingLength = Encoding.UTF8.GetBytes(jsonLength);
+
+            listener.Send(outcomingLength);
+            //Message acceptingLengthMessage = ReceiveMessage(listener);
+            //HandleMessage(acceptingLengthMessage);
+
+            listener.Send(outcomingMain);
+
+
+        }
+
+        private void CreateThreads()
+        {
+            Thread sendingThread = new Thread(() =>
+            {
+                try
+                {
+                    using (TCPSocket)
+                    {
+                        do
+                        {
+                            string messageText = Console.ReadLine();
+                            if (messageText.Contains(Resourсes.FILE_PHRASE))
+                            {
+                                SendMessage(TCPSocket, new Message(MessageType.FILE, null, Resourсes.USERNAME, messageText, null, null));
+                            }
+                            else if (messageText.Contains(Resourсes.EXIT_PHRASE))
+                            {
+                                SendMessage(TCPSocket, new Message(MessageType.DISCONNECT, null, Resourсes.USERNAME, null, null, null));
+                                TCPSocket.Close();
+                                Console.WriteLine(Resourсes.DISCONNECT_PHRASE);
+                            }
+                            else
+                            {
+                                SendMessage(TCPSocket, new Message(MessageType.TEXT, null, Resourсes.USERNAME, messageText, null, null));
+                            }
+                            //Message m = ReceiveMessage(TCPSocket);
+                            //HandleMessage(m);
+                        } while (TCPSocket.Connected);
+
+                    }
+                }
+                catch (ObjectDisposedException)
+                {
+                    Console.WriteLine(Resourсes.SERVER_ABORTED_CONNECTION_PHRASE);
+                    EnterToServer();
+                    CreateThreads();
+                }
+                catch
+                {
+                    Console.WriteLine(Resourсes.ERROR_DISCONNECTION_PHRASE);
+                }
+            });
+            sendingThread.Start();
+
+            Thread receivingThread = new Thread(() =>
+            {
+                try
+                {
+                    using (TCPSocket)
+                    {
+                        byte[] buffer = new byte[Resourсes.TEMP_BUFFER_SIZE];
+                        while (TCPSocket.Connected)
+                        {
+                            if (buffer.Length < Resourсes.TEMP_BUFFER_SIZE)
+                            {
+                                buffer = new byte[Resourсes.TEMP_BUFFER_SIZE];
+                            }
+                            Message message = ReceiveMessage(TCPSocket, buffer);
+                            HandleMessage(TCPSocket, message, ref buffer);
+                        }
+                    }
+                }
+                catch (SocketException)
+                {
+
+                }
+            });
+            receivingThread.Start();
+        }
+
+        private Message ReceiveMessage(Socket socket, byte[] buffer)
+        {
+            int bufferSize = socket.Receive(buffer);
+            return ToMessage(buffer, bufferSize);
+        }
+
+        //private Message ReceiveMessage(Socket socket)
+        //{
+        //    byte[] buffer = new byte[Resourсes.TEMP_BUFFER_SIZE];
+        //    int bufferSize = socket.Receive(buffer);
+        //    return ToMessage(buffer, bufferSize);
+        //}
+
+        private void PrintMessage(Message message)
+        {
+            switch (message.Type)
+            {
+                case MessageType.TEXT:
+                    Console.WriteLine($"[{message.Time}] {message.UserName}: {message.Text}");
+                    break;
+                case MessageType.FILE:
+                    Console.WriteLine($"[{message.Time}] {message.UserName} has just uploaded a file: {message.AttachedFileName}");
+                    break;
+                case MessageType.NEW_USER_CONNECTED:
+                    Console.WriteLine($"[{GetCurrentTime()}] {message.UserName} has been connected.");
+                    break;
+                case MessageType.USER_DISCONNECTED:
+                    Console.WriteLine($"[{GetCurrentTime()}] {message.UserName} has been disconnected.");
+                    break;
+                default:
+                    break;
+            }
+
+
+        }
+
+        private string GetCurrentTime()
         {
             return DateTime.Now.ToString("HH:mm");
         }
 
+        private Message ToMessage(byte[] buffer, int bufferSize)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append(Encoding.UTF8.GetString(buffer, 0, bufferSize));
+            Message message = JsonConvert.DeserializeObject<Message>(sb.ToString());
+            return message;
+        }
+
+        private void EnterToServer()
+        {
+            do {
+                try
+                {
+                    if (Resourсes.USERNAME == null)
+                    {
+                        Console.Write("Who are you?: ");
+                        Resourсes.USERNAME = Console.ReadLine();
+                    }
+                    byte[] buffer = new byte[Resourсes.TEMP_BUFFER_SIZE];
+                    TCPSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                    TCPSocket.Connect(TCPEndPoint);
+                    Console.WriteLine(Resourсes.CONNECTING_PHRASE);
+                    SendMessage(TCPSocket, new Message(MessageType.NEW_USER_CONNECTED, null, Resourсes.USERNAME, null, null, null));
+                    Message m = ReceiveMessage(TCPSocket, buffer);
+                    HandleMessage(TCPSocket, m, ref buffer);
+                }
+                catch (SocketException)
+                {
+                    Console.WriteLine(Resourсes.NO_ADRESS_PHRASE);
+                }
+            } while (!TCPSocket.Connected);
+        }
+        private void HandleMessage(Socket listener, Message message, ref byte[] buffer)
+        {
+            try
+            {
+                switch (message.Type)
+                {
+                    case MessageType.CONNECTION_FAILED:
+                        break;
+                    case MessageType.DISCONNECT:
+                        break;
+                    case MessageType.LENGTH:
+                        //SendMessage(listener, new Message(MessageType.OK, null, Resourсes.USERNAME, null, null, null));
+                        buffer = new byte[Convert.ToInt32(message.Text)];
+                        break;
+                    case MessageType.NEW_USER_CONNECTED:
+                        PrintMessage(message);
+                        break;
+                    case MessageType.OK:
+                        //continue
+                        break;
+                    case MessageType.TEXT:
+                        PrintMessage(message);
+                        break;
+                    case MessageType.FILE:
+                        File.WriteAllBytes(message.AttachedFileName, message.AttachedFileData);
+                        PrintMessage(message);
+                        break;
+                    case MessageType.USER_DISCONNECTED:
+                        PrintMessage(message);
+                        break;
+                    case MessageType.WELCOME:
+                        Console.WriteLine("Connected.");
+                        Console.WriteLine($"Hi, {Resourсes.USERNAME}. Welcome to the TCPChat! Type 'exit()' to quit the TCPChat.");
+                        Console.WriteLine("");
+                        break;
+                    case MessageType.WRONG_NICKNAME:
+                        Console.WriteLine(Resourсes.WRONG_NICKNAME_PHRASE);
+                        Resourсes.USERNAME = null;
+                        TCPSocket.Close();
+                        break;
+                    case MessageType.MESSAGE_NOT_SENT:
+                        break;
+                    default:
+                        Console.WriteLine(Resourсes.FAILED_TO_CONNECT_PHRASE);
+                        TCPSocket.Close();
+                        break;
+                }
+            }
+            catch (NullReferenceException)
+            {
+                Console.WriteLine(Resourсes.SERVER_ABORTED_CONNECTION_PHRASE);
+                EnterToServer();
+            }
+        }
     }
 }
