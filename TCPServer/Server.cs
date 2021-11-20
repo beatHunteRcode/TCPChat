@@ -21,6 +21,8 @@ namespace TCPServer
         private static readonly List<Socket> listenersList = new List<Socket>();
         private static readonly List<String> nicknamesList = new List<string>();
 
+        public Socket TCPSocket, clientSocket;
+        byte[] _buffer;
         public Server(string ip, int port)
         {
             this.ip = ip;
@@ -34,22 +36,42 @@ namespace TCPServer
             {
                 IPEndPoint TCPEndPoint = new IPEndPoint(IPAddress.Parse(ip), port);
 
-                Socket TCPSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                TCPSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 TCPSocket.Bind(TCPEndPoint);
                 Console.WriteLine("Server has successfully launched");
                 TCPSocket.Listen(listenersNumb);
                 Console.WriteLine("Server is running");
                 while (true)
                 {
-                    var listener = TCPSocket.Accept();
-                    listenersList.Add(listener);
-                    CreateUserThread(listener);
+                    TCPSocket.BeginAccept(new AsyncCallback(AcceptCallBack), null);
+                    //listenersList.Add(clientSocket);
+                    //CreateUserThread(clientSocket);
                 }
             }
             finally
             {
                 Console.ReadKey();
             }
+        }
+
+        private void AcceptCallBack(IAsyncResult ar)
+        {
+            try
+            {
+                clientSocket = TCPSocket.EndAccept(ar);
+                _buffer = new byte[clientSocket.ReceiveBufferSize];
+                clientSocket.BeginReceive(_buffer, 0, _buffer.Length, SocketFlags.None, new AsyncCallback(ReceiveCallback), null);
+            }
+            catch(Exception e)
+            {
+                Console.WriteLine(e.StackTrace);
+            }
+        }
+
+        private void ReceiveCallback(IAsyncResult ar)
+        {
+            Message message = ToMessage(_buffer, _buffer.Length);
+            HandleMessage(clientSocket, message, ref _buffer);
         }
 
         private Message ReceiveMessage(Socket socket, byte[] buffer)
@@ -150,18 +172,30 @@ namespace TCPServer
             string jsonString = JsonConvert.SerializeObject(message);
             byte[] outcomingMain = Encoding.UTF8.GetBytes(jsonString);
 
-            Message messageWithLength = new Message(MessageType.LENGTH, null, message.UserName, outcomingMain.Length.ToString(), null, null);
-            string jsonLength = JsonConvert.SerializeObject(messageWithLength);
-            byte[] outcomingLength = Encoding.UTF8.GetBytes(jsonLength);
+            //Message messageWithLength = new Message(MessageType.LENGTH, null, message.UserName, outcomingMain.Length.ToString(), null, null);
+            //string jsonLength = JsonConvert.SerializeObject(messageWithLength);
+            //byte[] outcomingLength = Encoding.UTF8.GetBytes(jsonLength);
 
-            listener.Send(outcomingLength);
-            
+            listener.BeginSend(outcomingMain, 0, outcomingMain.Length, SocketFlags.None, new AsyncCallback(SendCallback), null);
+
             //Message acceptingLengthMessage = ReceiveMessage(listener);
             //HandleMessage(acceptingLengthMessage);
 
-            listener.Send(outcomingMain);
+            //listener.Send(outcomingMain);
 
 
+        }
+
+        private void SendCallback(IAsyncResult ar)
+        {
+            try
+            {
+                TCPSocket.EndSend(ar);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e.StackTrace);
+            }
         }
 
         private void SendMessageWithoutLength(Socket listener, Message message)
