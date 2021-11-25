@@ -31,6 +31,8 @@ namespace TCPServer
     public class Server
     {
 
+        public ManualResetEvent allDone = new ManualResetEvent(false);
+
         readonly string ip;
         readonly int port;
         const int listenersNumb = 10;
@@ -49,7 +51,7 @@ namespace TCPServer
             Console.WriteLine("Launching server...");
             try
             {
-                StateObject state = new StateObject();
+                StateObject serverState = new StateObject();
                 IPEndPoint TCPEndPoint = new IPEndPoint(IPAddress.Parse(ip), port);
                 TCPSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 TCPSocket.Bind(TCPEndPoint);
@@ -59,10 +61,9 @@ namespace TCPServer
                 //Console.WriteLine("Server is running. Press Q to close the Server.");
                 while (true)
                 {
-                    state.resetEvent.Reset();
-                    state.workSocket = TCPSocket;
-                    TCPSocket.BeginAccept(new AsyncCallback(AcceptCallBack), state);
-                    state.resetEvent.WaitOne();
+                    allDone.Reset();
+                    TCPSocket.BeginAccept(new AsyncCallback(AcceptCallBack), TCPSocket);
+                    allDone.WaitOne();
                 }
                 //while (Console.ReadKey().Key != ConsoleKey.Q)
                 //{
@@ -79,14 +80,13 @@ namespace TCPServer
         {
             try
             {
-                StateObject state = (StateObject)ar.AsyncState;
-                Socket listener = state.workSocket;
+                allDone.Set();
+                Socket listener = (Socket) ar.AsyncState;
                 Socket handler = listener.EndAccept(ar);
-                state.resetEvent.Set();
                 listenersList.Add(handler);
+                StateObject state = new StateObject();
                 state.workSocket = handler;
-                handler.BeginReceive(state.buffer, 0, StateObject.BufferSize, SocketFlags.None, new AsyncCallback(ReceiveCallback), state);
-                state.resetEvent.WaitOne();
+                handler.BeginReceive(state.buffer, 0, state.buffer.Length, SocketFlags.None, new AsyncCallback(ReceiveCallback), state);
                 CreateUserThread(handler);
             }
             catch(Exception e)
@@ -102,15 +102,16 @@ namespace TCPServer
             {
                 StateObject state = (StateObject)ar.AsyncState;
                 Socket handler = state.workSocket;
-
+                
                 int bytesRead = handler.EndReceive(ar);
 
                 if (bytesRead > 0)
                 {
                     Message message = ToMessage(state.buffer, state.buffer.Length);
-                    HandleMessage(handler, message, state.buffer);
+                    HandleMessage(handler, message, ref state.buffer);
                 }
                 state.resetEvent.Set();
+
             }
             catch(Exception e)
             {
@@ -185,11 +186,13 @@ namespace TCPServer
                 {
                     do
                     {
-                        if (state.buffer.Length < Resourсes.TEMP_BUFFER_SIZE)
-                        {
+                        //if (state.buffer.Length < Resourсes.TEMP_BUFFER_SIZE)
+                        //{
                             state.buffer = new byte[Resourсes.TEMP_BUFFER_SIZE];
-                        }
-                        listener.BeginReceive(state.buffer, 0, StateObject.BufferSize, SocketFlags.None, new AsyncCallback(ReceiveCallback), state);
+                        //}
+                        
+                        state.resetEvent.Reset();
+                        listener.BeginReceive(state.buffer, 0, state.buffer.Length, SocketFlags.None, new AsyncCallback(ReceiveCallback), state);
                         state.resetEvent.WaitOne();
                         //userName = message.UserName;
                         //HandleMessage(listener, message, buffer);
@@ -221,16 +224,17 @@ namespace TCPServer
             string jsonString = JsonConvert.SerializeObject(message);
             byte[] outcomingMain = Encoding.UTF8.GetBytes(jsonString);
 
-            //Message messageWithLength = new Message(MessageType.LENGTH, null, message.UserName, outcomingMain.Length.ToString(), null, null);
-            //string jsonLength = JsonConvert.SerializeObject(messageWithLength);
-            //byte[] outcomingLength = Encoding.UTF8.GetBytes(jsonLength);
+            Message messageWithLength = new Message(MessageType.LENGTH, null, message.UserName, outcomingMain.Length.ToString(), null, null);
+            string jsonLength = JsonConvert.SerializeObject(messageWithLength);
+            byte[] outcomingLength = Encoding.UTF8.GetBytes(jsonLength);
 
-            listener.BeginSend(outcomingMain, 0, outcomingMain.Length, SocketFlags.None, new AsyncCallback(SendCallback), listener);
+            //listener.BeginSend(outcomingLength, 0, outcomingLength.Length, SocketFlags.None, new AsyncCallback(SendCallback), listener);
 
             //Message acceptingLengthMessage = ReceiveMessage(listener);
             //HandleMessage(acceptingLengthMessage);
 
             //listener.Send(outcomingMain);
+            listener.BeginSend(outcomingMain, 0, outcomingMain.Length, SocketFlags.None, new AsyncCallback(SendCallback), listener);
 
 
         }
@@ -264,7 +268,7 @@ namespace TCPServer
             return message;
         }
 
-        private void HandleMessage(Socket listener, Message message, byte[] buffer)
+        private void HandleMessage(Socket listener, Message message, ref byte[] buffer)
         {
             try
             {
@@ -291,7 +295,7 @@ namespace TCPServer
                             nicknamesList.Add(message.UserName);
                             Console.WriteLine($"[{GetCurrentTime()}] {message.UserName} has been connected.");
                             SendMessage(listener, new Message(MessageType.WELCOME, GetCurrentTime(), Resourсes.SERVER_NAME, null, null, null));
-                            //BroadcastNewUserMessage(listenersList, listener, message.UserName);
+                            BroadcastNewUserMessage(listenersList, listener, message.UserName);
                         }
                         break;
                     case MessageType.OK:

@@ -34,10 +34,11 @@ namespace TCPClient
 
         static Socket TCPSocket;
         IPEndPoint TCPEndPoint;
-        //byte[] _buffer;
+        byte[] _buffer;
         public Client(string ip, int port)
         {
             TCPEndPoint = new IPEndPoint(IPAddress.Parse(ip), port);
+            _buffer = new byte[Resourсes.TEMP_BUFFER_SIZE];
         }
 
         public void Run()
@@ -45,7 +46,6 @@ namespace TCPClient
             try
             {
                 EnterToServer();
-                
             }
             catch(Exception e)
             {
@@ -67,20 +67,19 @@ namespace TCPClient
             string jsonString = JsonConvert.SerializeObject(message);
             byte[] outcomingMain = Encoding.UTF8.GetBytes(jsonString);
 
-            //Message messageWithLength = new Message(MessageType.LENGTH, null, message.UserName, outcomingMain.Length.ToString(), null, null);
-            //string jsonLength = JsonConvert.SerializeObject(messageWithLength);
-            //byte[] outcomingLength = Encoding.UTF8.GetBytes(jsonLength);
+            Message messageWithLength = new Message(MessageType.LENGTH, null, message.UserName, outcomingMain.Length.ToString(), null, null);
+            string jsonLength = JsonConvert.SerializeObject(messageWithLength);
+            byte[] outcomingLength = Encoding.UTF8.GetBytes(jsonLength);
 
             //SockAsyncEventArgs.SetBuffer(outcomingMain, 0, outcomingMain.Length);
             //listener.SendAsync(SockAsyncEventArgs);
 
-            listener.BeginSend(outcomingMain, 0, outcomingMain.Length, 0, new AsyncCallback(SendCallback), listener);
-
+            listener.BeginSend(outcomingLength, 0, outcomingLength.Length, 0, new AsyncCallback(SendCallback), listener);
+            
             //Message acceptingLengthMessage = ReceiveMessage(listener);
             //HandleMessage(acceptingLengthMessage);
 
-
-
+            listener.BeginSend(outcomingMain, 0, outcomingMain.Length, 0, new AsyncCallback(SendCallback), listener);
         }
 
         private void SendCallback(IAsyncResult ar)
@@ -148,16 +147,17 @@ namespace TCPClient
                 {
                     using (TCPSocket)
                     {
-                        byte[] buffer = new byte[Resourсes.TEMP_BUFFER_SIZE];
-                        while (TCPSocket.Connected)
+                        do
                         {
-                            if (buffer.Length < Resourсes.TEMP_BUFFER_SIZE)
-                            {
-                                buffer = new byte[Resourсes.TEMP_BUFFER_SIZE];
-                            }
+                            //if (_buffer.Length < Resourсes.TEMP_BUFFER_SIZE)
+                            //{
+                                _buffer = new byte[Resourсes.TEMP_BUFFER_SIZE];
+                            //}
+                            receiveDone.Reset();
                             ReceiveMessage(TCPSocket);
+                            receiveDone.WaitOne();
                             //HandleMessage(TCPSocket, message, ref buffer);
-                        }
+                        } while (TCPSocket.Connected);
                     }
                 }
                 catch (SocketException)
@@ -172,18 +172,16 @@ namespace TCPClient
         {
             try
             {
-                StateObject state = (StateObject)ar.AsyncState;
-                Socket handler = state.workSocket;
+                Socket handler = (Socket) ar.AsyncState;
 
                 int bytesRead = handler.EndReceive(ar);
 
                 if (bytesRead > 0)
                 {
-                    Message message = ToMessage(state.buffer, state.buffer.Length);
-                    HandleMessage(TCPSocket, message, state.buffer);
-                    receiveDone.Set();
+                    Message message = ToMessage(_buffer, _buffer.Length);
+                    HandleMessage(TCPSocket, message, ref _buffer);
                 }
-
+                receiveDone.Set();
             }
             catch (Exception e)
             {
@@ -193,9 +191,7 @@ namespace TCPClient
 
         private void ReceiveMessage(Socket socket)
         {
-            StateObject state = new StateObject();
-            state.workSocket = socket;
-            socket.BeginReceive(state.buffer, 0, state.buffer.Length, SocketFlags.None, new AsyncCallback(ReceiveCallback), state);
+            socket.BeginReceive(_buffer, 0, _buffer.Length, SocketFlags.None, new AsyncCallback(ReceiveCallback), socket);
         }
 
         //private Message ReceiveMessage(Socket socket)
@@ -292,7 +288,7 @@ namespace TCPClient
             }
         }
 
-        private void HandleMessage(Socket listener, Message message, byte[] buffer)
+        private void HandleMessage(Socket listener, Message message, ref byte[] buffer)
         {
             try
             {
