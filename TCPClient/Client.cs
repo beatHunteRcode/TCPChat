@@ -8,18 +8,35 @@ using System.IO;
 
 namespace TCPClient
 {
+
+    // State object for receiving data from remote device.  
+    public class StateObject
+    {
+        // Client socket.  
+        public Socket workSocket = null;
+        // Size of receive buffer.  
+        public const int BufferSize = Resourсes.TEMP_BUFFER_SIZE;
+        // Receive buffer.  
+        public byte[] buffer = new byte[BufferSize];
+        // Received data string.  
+        public StringBuilder sb = new StringBuilder();
+    }
     public class Client
     {
 
+        // ManualResetEvent instances signal completion.  
+        private static ManualResetEvent connectDone =
+            new ManualResetEvent(false);
+        private static ManualResetEvent sendDone =
+            new ManualResetEvent(false);
+        private static ManualResetEvent receiveDone =
+            new ManualResetEvent(false);
+
         static Socket TCPSocket;
         IPEndPoint TCPEndPoint;
-        readonly string ip;
-        readonly int port;
-        byte[] _buffer;
+        //byte[] _buffer;
         public Client(string ip, int port)
         {
-            this.ip = ip;
-            this.port = port;
             TCPEndPoint = new IPEndPoint(IPAddress.Parse(ip), port);
         }
 
@@ -28,10 +45,11 @@ namespace TCPClient
             try
             {
                 EnterToServer();
-                CreateThreads();
+                
             }
             catch(Exception e)
             {
+                Console.WriteLine(e.Message);
                 Console.WriteLine(e.StackTrace);
                 Console.ReadKey();
             }
@@ -53,7 +71,11 @@ namespace TCPClient
             //string jsonLength = JsonConvert.SerializeObject(messageWithLength);
             //byte[] outcomingLength = Encoding.UTF8.GetBytes(jsonLength);
 
-            listener.BeginSend(outcomingMain, 0, outcomingMain.Length, SocketFlags.None, new AsyncCallback(SendCallback), null);
+            //SockAsyncEventArgs.SetBuffer(outcomingMain, 0, outcomingMain.Length);
+            //listener.SendAsync(SockAsyncEventArgs);
+
+            listener.BeginSend(outcomingMain, 0, outcomingMain.Length, 0, new AsyncCallback(SendCallback), listener);
+
             //Message acceptingLengthMessage = ReceiveMessage(listener);
             //HandleMessage(acceptingLengthMessage);
 
@@ -65,10 +87,13 @@ namespace TCPClient
         {
             try
             {
-                TCPSocket.EndSend(ar);
+                Socket client = (Socket) ar.AsyncState; 
+                int bytesSent = client.EndSend(ar);
+                sendDone.Set();
             }
             catch(Exception e)
             {
+                Console.WriteLine(e.Message);
                 Console.WriteLine(e.StackTrace);
             }
         }
@@ -130,7 +155,7 @@ namespace TCPClient
                             {
                                 buffer = new byte[Resourсes.TEMP_BUFFER_SIZE];
                             }
-                            ReceiveMessage(TCPSocket, buffer);
+                            ReceiveMessage(TCPSocket);
                             //HandleMessage(TCPSocket, message, ref buffer);
                         }
                     }
@@ -145,14 +170,32 @@ namespace TCPClient
 
         private void ReceiveCallback(IAsyncResult ar)
         {
-            Message message = ToMessage(_buffer, _buffer.Length);
-            HandleMessage(TCPSocket, message, ref _buffer);
+            try
+            {
+                StateObject state = (StateObject)ar.AsyncState;
+                Socket handler = state.workSocket;
+
+                int bytesRead = handler.EndReceive(ar);
+
+                if (bytesRead > 0)
+                {
+                    Message message = ToMessage(state.buffer, state.buffer.Length);
+                    HandleMessage(TCPSocket, message, state.buffer);
+                    receiveDone.Set();
+                }
+
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e.ToString());
+            }
         }
 
-        private void ReceiveMessage(Socket socket, byte[] buffer)
+        private void ReceiveMessage(Socket socket)
         {
-            _buffer = new byte[TCPSocket.ReceiveBufferSize];
-            socket.BeginReceive(_buffer, 0, _buffer.Length, SocketFlags.None, new AsyncCallback(ReceiveCallback), null);
+            StateObject state = new StateObject();
+            state.workSocket = socket;
+            socket.BeginReceive(state.buffer, 0, state.buffer.Length, SocketFlags.None, new AsyncCallback(ReceiveCallback), state);
         }
 
         //private Message ReceiveMessage(Socket socket)
@@ -200,7 +243,8 @@ namespace TCPClient
 
         private void EnterToServer()
         {
-            do {
+            do
+            {
                 try
                 {
                     if (Resourсes.USERNAME == null)
@@ -208,34 +252,47 @@ namespace TCPClient
                         Console.Write("Who are you?: ");
                         Resourсes.USERNAME = Console.ReadLine();
                     }
-                    byte[] buffer = new byte[Resourсes.TEMP_BUFFER_SIZE];
                     TCPSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                    TCPSocket.BeginConnect(TCPEndPoint, new AsyncCallback(ConnectsCallback), null);
-                    Console.WriteLine(Resourсes.CONNECTING_PHRASE);
-                    SendMessage(TCPSocket, new Message(MessageType.NEW_USER_CONNECTED, null, Resourсes.USERNAME, null, null, null));
-                    ReceiveMessage(TCPSocket, buffer);
+                    TCPSocket.BeginConnect(TCPEndPoint, new AsyncCallback(ConnectCallback), TCPSocket);
+                    connectDone.WaitOne();
                     //HandleMessage(TCPSocket, m, ref buffer);
                 }
                 catch (SocketException)
                 {
                     Console.WriteLine(Resourсes.NO_ADRESS_PHRASE);
                 }
+                catch(Exception e)
+                {
+                    Console.WriteLine(e.Message);
+                    Console.WriteLine(e.StackTrace);
+                }
             } while (!TCPSocket.Connected);
         }
 
-        private void ConnectsCallback(IAsyncResult ar)
+        private void ConnectCallback(IAsyncResult ar)
         {
             try
             {
-                TCPSocket.EndConnect(ar);
+                // Retrieve the socket from the state object.  
+                Socket client = (Socket)ar.AsyncState;
+                // Complete the connection.  
+                client.EndConnect(ar);
+                //connectDone.Set();
+                Console.WriteLine(Resourсes.CONNECTING_PHRASE);
+                SendMessage(TCPSocket, new Message(MessageType.NEW_USER_CONNECTED, null, Resourсes.USERNAME, null, null, null));
+                sendDone.WaitOne();
+                ReceiveMessage(TCPSocket);
+                receiveDone.WaitOne();
+                CreateThreads();
             }
-            catch
+            catch(Exception e)
             {
-
+                Console.WriteLine(e.Message);
+                Console.WriteLine(e.StackTrace);
             }
         }
 
-        private void HandleMessage(Socket listener, Message message, ref byte[] buffer)
+        private void HandleMessage(Socket listener, Message message, byte[] buffer)
         {
             try
             {

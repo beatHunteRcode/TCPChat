@@ -2,19 +2,35 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Net;
 using System.Net.Sockets;
-using System.Runtime.Serialization.Formatters.Binary;
 using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
-using System.Xml.Serialization;
 
 namespace TCPServer
 {
+
+    // State object for reading client data asynchronously  
+    public class StateObject
+    {
+        // Size of receive buffer.  
+        public const int BufferSize = Resourсes.TEMP_BUFFER_SIZE;
+
+        // Receive buffer.  
+        public byte[] buffer = new byte[BufferSize];
+
+        // Received data string.
+        public StringBuilder sb = new StringBuilder();
+
+        // Client socket.
+        public Socket workSocket = null;
+
+        public ManualResetEvent resetEvent = new ManualResetEvent(false);
+    }
+
     public class Server
     {
+
         readonly string ip;
         readonly int port;
         const int listenersNumb = 10;
@@ -22,7 +38,6 @@ namespace TCPServer
         private static readonly List<String> nicknamesList = new List<string>();
 
         public Socket TCPSocket, clientSocket;
-        byte[] _buffer;
         public Server(string ip, int port)
         {
             this.ip = ip;
@@ -34,23 +49,29 @@ namespace TCPServer
             Console.WriteLine("Launching server...");
             try
             {
+                StateObject state = new StateObject();
                 IPEndPoint TCPEndPoint = new IPEndPoint(IPAddress.Parse(ip), port);
-
                 TCPSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 TCPSocket.Bind(TCPEndPoint);
-                Console.WriteLine("Server has successfully launched");
                 TCPSocket.Listen(listenersNumb);
+                Console.WriteLine("Server has successfully launched");
                 Console.WriteLine("Server is running");
+                //Console.WriteLine("Server is running. Press Q to close the Server.");
                 while (true)
                 {
-                    TCPSocket.BeginAccept(new AsyncCallback(AcceptCallBack), null);
-                    //listenersList.Add(clientSocket);
-                    //CreateUserThread(clientSocket);
+                    state.resetEvent.Reset();
+                    state.workSocket = TCPSocket;
+                    TCPSocket.BeginAccept(new AsyncCallback(AcceptCallBack), state);
+                    state.resetEvent.WaitOne();
                 }
+                //while (Console.ReadKey().Key != ConsoleKey.Q)
+                //{
+                //}
             }
-            finally
+            catch (Exception e)
             {
-                Console.ReadKey();
+                Console.WriteLine(e.Message);
+                Console.WriteLine(e.StackTrace);
             }
         }
 
@@ -58,20 +79,44 @@ namespace TCPServer
         {
             try
             {
-                clientSocket = TCPSocket.EndAccept(ar);
-                _buffer = new byte[clientSocket.ReceiveBufferSize];
-                clientSocket.BeginReceive(_buffer, 0, _buffer.Length, SocketFlags.None, new AsyncCallback(ReceiveCallback), null);
+                StateObject state = (StateObject)ar.AsyncState;
+                Socket listener = state.workSocket;
+                Socket handler = listener.EndAccept(ar);
+                state.resetEvent.Set();
+                listenersList.Add(handler);
+                state.workSocket = handler;
+                handler.BeginReceive(state.buffer, 0, StateObject.BufferSize, SocketFlags.None, new AsyncCallback(ReceiveCallback), state);
+                state.resetEvent.WaitOne();
+                CreateUserThread(handler);
             }
             catch(Exception e)
             {
+                Console.WriteLine(e.Message);
                 Console.WriteLine(e.StackTrace);
             }
         }
 
         private void ReceiveCallback(IAsyncResult ar)
         {
-            Message message = ToMessage(_buffer, _buffer.Length);
-            HandleMessage(clientSocket, message, ref _buffer);
+            try
+            {
+                StateObject state = (StateObject)ar.AsyncState;
+                Socket handler = state.workSocket;
+
+                int bytesRead = handler.EndReceive(ar);
+
+                if (bytesRead > 0)
+                {
+                    Message message = ToMessage(state.buffer, state.buffer.Length);
+                    HandleMessage(handler, message, state.buffer);
+                }
+                state.resetEvent.Set();
+            }
+            catch(Exception e)
+            {
+                Console.WriteLine(e.Message);
+                Console.WriteLine(e.StackTrace);
+            }
         }
 
         private Message ReceiveMessage(Socket socket, byte[] buffer)
@@ -134,22 +179,26 @@ namespace TCPServer
             Thread userThread = new Thread(() =>
             {
                 string userName = null;
+                StateObject state = new StateObject();
+                state.workSocket = listener;
                 try
                 {
-                    byte[] buffer = new byte[Resourсes.TEMP_BUFFER_SIZE];
                     do
                     {
-                        if (buffer.Length < Resourсes.TEMP_BUFFER_SIZE)
+                        if (state.buffer.Length < Resourсes.TEMP_BUFFER_SIZE)
                         {
-                            buffer = new byte[Resourсes.TEMP_BUFFER_SIZE];
+                            state.buffer = new byte[Resourсes.TEMP_BUFFER_SIZE];
                         }
-                        Message message = ReceiveMessage(listener, buffer);
-                        userName = message.UserName;
-                        HandleMessage(listener, message, ref buffer);
+                        listener.BeginReceive(state.buffer, 0, StateObject.BufferSize, SocketFlags.None, new AsyncCallback(ReceiveCallback), state);
+                        state.resetEvent.WaitOne();
+                        //userName = message.UserName;
+                        //HandleMessage(listener, message, buffer);
                     } while (listener.Connected);
                 }
-                catch
+                catch (Exception e)
                 {
+                    Console.WriteLine(e.Message);
+                    Console.WriteLine(e.StackTrace);
                     DisconnectUser(listener, userName);
                 }
             });
@@ -176,7 +225,7 @@ namespace TCPServer
             //string jsonLength = JsonConvert.SerializeObject(messageWithLength);
             //byte[] outcomingLength = Encoding.UTF8.GetBytes(jsonLength);
 
-            listener.BeginSend(outcomingMain, 0, outcomingMain.Length, SocketFlags.None, new AsyncCallback(SendCallback), null);
+            listener.BeginSend(outcomingMain, 0, outcomingMain.Length, SocketFlags.None, new AsyncCallback(SendCallback), listener);
 
             //Message acceptingLengthMessage = ReceiveMessage(listener);
             //HandleMessage(acceptingLengthMessage);
@@ -190,10 +239,12 @@ namespace TCPServer
         {
             try
             {
-                TCPSocket.EndSend(ar);
+                Socket handler = (Socket)ar.AsyncState;
+                int bytesSent = handler.EndSend(ar);
             }
             catch (Exception e)
             {
+                Console.WriteLine(e.Message);
                 Console.WriteLine(e.StackTrace);
             }
         }
@@ -213,7 +264,7 @@ namespace TCPServer
             return message;
         }
 
-        private void HandleMessage(Socket listener, Message message, ref byte[] buffer)
+        private void HandleMessage(Socket listener, Message message, byte[] buffer)
         {
             try
             {
@@ -239,8 +290,8 @@ namespace TCPServer
                         {
                             nicknamesList.Add(message.UserName);
                             Console.WriteLine($"[{GetCurrentTime()}] {message.UserName} has been connected.");
-                            SendMessageWithoutLength(listener, new Message(MessageType.WELCOME, GetCurrentTime(), Resourсes.SERVER_NAME, null, null, null));
-                            BroadcastNewUserMessage(listenersList, listener, message.UserName);
+                            SendMessage(listener, new Message(MessageType.WELCOME, GetCurrentTime(), Resourсes.SERVER_NAME, null, null, null));
+                            //BroadcastNewUserMessage(listenersList, listener, message.UserName);
                         }
                         break;
                     case MessageType.OK:
