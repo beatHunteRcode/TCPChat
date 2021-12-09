@@ -52,6 +52,11 @@ namespace TCPServer
             }
         }
 
+        private Message ReceiveStreamMessage(Socket socket, byte[] buffer)
+        {
+            int bufferSize = socket.Receive(buffer);
+            return ToMessage(buffer, bufferSize);
+        }
         private Message ReceiveMessage(Socket socket, byte[] buffer)
         {
             int bufferSize = socket.Receive(buffer);
@@ -121,13 +126,14 @@ namespace TCPServer
                         {
                             buffer = new byte[Resourсes.TEMP_BUFFER_SIZE];
                         }
-                        Message message = ReceiveMessage(listener, buffer);
+                        Message message = ReceiveStreamMessage(listener, buffer);
                         userName = message.UserName;
                         HandleMessage(listener, message, ref buffer);
                     } while (listener.Connected);
                 }
-                catch
+                catch (Exception e)
                 {
+                    Console.WriteLine(e.ToString());
                     DisconnectUser(listener, userName);
                 }
             });
@@ -172,6 +178,63 @@ namespace TCPServer
         }
 
         private Message ToMessage(byte[] buffer, int bufferSize)
+        {
+            Stream stream = new MemoryStream(buffer);
+            byte[] typeBuffer = new byte[Resourсes.TYPE_FIELD_SIZE];
+            byte[] lengthBuffer = new byte[Resourсes.LENGTH_FIELD_SIZE];
+            byte[] timeBuffer = new byte[Resourсes.TIME_FIELD_SIZE];
+            byte[] usernameBuffer = new byte[Resourсes.USERNAME_FIELD_SIZE];
+            byte[] textBuffer = new byte[Resourсes.TEXT_FIELD_SIZE];
+            byte[] attachedFileNameBuffer = new byte[Resourсes.ATTACHED_FILE_NAME_FIELD_SIZE];
+            byte[] attachedFileDataBuffer = new byte[Resourсes.ATTACHED_FILE_DATA_FIELD_SIZE];
+            stream.Read(
+                typeBuffer,
+                0,
+                Resourсes.TYPE_FIELD_SIZE
+            );
+            stream.Read(
+                lengthBuffer,
+                0,
+                Resourсes.LENGTH_FIELD_SIZE
+            );
+            stream.Read(
+                timeBuffer,
+                0,
+                Resourсes.TIME_FIELD_SIZE
+            );
+            stream.Read(
+                usernameBuffer,
+                0,
+                Resourсes.USERNAME_FIELD_SIZE
+            );
+            stream.Read(
+                textBuffer,
+                0,
+                Resourсes.TEXT_FIELD_SIZE
+            );
+            stream.Read(
+                attachedFileNameBuffer,
+                0,
+                Resourсes.ATTACHED_FILE_NAME_FIELD_SIZE
+            );
+            stream.Read(
+                attachedFileDataBuffer,
+                0,
+                Resourсes.ATTACHED_FILE_DATA_FIELD_SIZE
+            );
+            Message message = new Message(
+                (MessageType) Int32.Parse(Encoding.UTF8.GetString(typeBuffer)),
+                //Encoding.UTF8.GetString(lengthBuffer),
+                Encoding.UTF8.GetString(timeBuffer),
+                Encoding.UTF8.GetString(usernameBuffer),
+                Encoding.UTF8.GetString(textBuffer),
+                Encoding.UTF8.GetString(attachedFileNameBuffer),
+                attachedFileDataBuffer
+            );
+            return message;
+        }
+
+        private Message ToMessage_old(byte[] buffer, int bufferSize)
         {
             StringBuilder sb = new StringBuilder();
             sb.Append(Encoding.UTF8.GetString(buffer, 0, bufferSize));

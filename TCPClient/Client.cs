@@ -32,8 +32,40 @@ namespace TCPClient
             }
             catch(Exception e)
             {
-                Console.WriteLine(e.StackTrace);
+                Console.WriteLine(e.ToString());
                 Console.ReadKey();
+            }
+        }
+
+        private void SendStreamMessage(Socket listener, Message message)
+        {
+            if (message.Type == MessageType.FILE)
+            {
+                string filePath = message.Text.Split(' ')[1];
+                byte[] sendingFile = File.ReadAllBytes(filePath);
+                message.AttachedFileName = filePath;
+                message.AttachedFileData = sendingFile;
+            }
+
+            NetworkStream messageStream = CreateSendingStream(listener, message);
+            byte[] messageArr = StreamToBytes(messageStream);
+            message.Length = messageArr.Length;
+            messageStream = CreateSendingStream(listener, message);
+            messageArr = StreamToBytes(messageStream);
+            listener.Send(messageArr);
+        }
+
+        public static byte[] StreamToBytes(Stream input)
+        {
+            byte[] buffer = new byte[16 * 1024];
+            using (MemoryStream ms = new MemoryStream())
+            {
+                int read;
+                while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    ms.Write(buffer, 0, read);
+                }
+                return ms.ToArray();
             }
         }
 
@@ -62,6 +94,82 @@ namespace TCPClient
 
         }
 
+        private NetworkStream CreateSendingStream(Socket listener, Message message)
+        {
+            byte[] typeArray = new byte[Resourсes.TYPE_FIELD_SIZE];
+            byte[] lengthArray = new byte[Resourсes.LENGTH_FIELD_SIZE];
+            byte[] timeArray = new byte[Resourсes.TIME_FIELD_SIZE];
+            byte[] usernameArray = new byte[Resourсes.USERNAME_FIELD_SIZE];
+            byte[] textArray = new byte[Resourсes.TEXT_FIELD_SIZE];
+            byte[] attachedFileNameArray = new byte[Resourсes.ATTACHED_FILE_NAME_FIELD_SIZE];
+            byte[] attachedFileDataArray = new byte[Resourсes.ATTACHED_FILE_DATA_FIELD_SIZE];
+            NetworkStream stream = new NetworkStream(listener);
+
+            if (message.Type != null)
+            {
+                Encoding.UTF8.GetBytes(((int)message.Type).ToString()).CopyTo(typeArray, 0);
+                stream.Write(
+                    typeArray,
+                    0,
+                    Resourсes.TYPE_FIELD_SIZE
+                );
+            }
+            if (message.Length != 0)
+            {
+                Encoding.UTF8.GetBytes(message.Length.ToString()).CopyTo(lengthArray, 0);
+                stream.Write(
+                    lengthArray,
+                    Resourсes.TYPE_FIELD_SIZE,
+                    Resourсes.LENGTH_FIELD_SIZE
+                );
+            }
+            if (message.Time != null)
+            {
+                Encoding.UTF8.GetBytes(message.Time.ToString()).CopyTo(timeArray, 0);
+                stream.Write(
+                    timeArray,
+                    0,
+                    Resourсes.TIME_FIELD_SIZE
+                );
+            }
+            if (message.UserName != null)
+            {
+                Encoding.UTF8.GetBytes(message.UserName.ToString()).CopyTo(usernameArray, 0);
+                stream.Write(
+                    usernameArray,
+                    0,
+                    Resourсes.USERNAME_FIELD_SIZE
+                );
+            }
+            if (message.Text != null)
+            {
+                Encoding.UTF8.GetBytes(message.Text.ToString()).CopyTo(textArray, 0);
+                stream.Write(
+                    textArray,
+                    0,
+                    Resourсes.TEXT_FIELD_SIZE
+                );
+            }
+            if (message.AttachedFileName != null)
+            {
+                Encoding.UTF8.GetBytes(message.AttachedFileName.ToString()).CopyTo(attachedFileNameArray, 0);
+                stream.Write(
+                    attachedFileNameArray,
+                    0,
+                    Resourсes.ATTACHED_FILE_NAME_FIELD_SIZE
+                );
+            }
+            if (message.AttachedFileData != null)
+            {
+                Encoding.UTF8.GetBytes(message.AttachedFileData.ToString()).CopyTo(attachedFileDataArray, 0);
+                stream.Write(
+                    attachedFileDataArray,
+                    0,
+                    Resourсes.ATTACHED_FILE_DATA_FIELD_SIZE
+                );
+            }
+            return stream;
+        }
         private void CreateThreads()
         {
             Thread sendingThread = new Thread(() =>
@@ -75,17 +183,17 @@ namespace TCPClient
                             string messageText = Console.ReadLine();
                             if (messageText.Contains(Resourсes.FILE_PHRASE))
                             {
-                                SendMessage(TCPSocket, new Message(MessageType.FILE, null, Resourсes.USERNAME, messageText, null, null));
+                                SendStreamMessage(TCPSocket, new Message(MessageType.FILE, null, Resourсes.USERNAME, messageText, null, null));
                             }
                             else if (messageText.Contains(Resourсes.EXIT_PHRASE))
                             {
-                                SendMessage(TCPSocket, new Message(MessageType.DISCONNECT, null, Resourсes.USERNAME, null, null, null));
+                                SendStreamMessage(TCPSocket, new Message(MessageType.DISCONNECT, null, Resourсes.USERNAME, null, null, null));
                                 TCPSocket.Close();
                                 Console.WriteLine(Resourсes.DISCONNECT_PHRASE);
                             }
                             else
                             {
-                                SendMessage(TCPSocket, new Message(MessageType.TEXT, null, Resourсes.USERNAME, messageText, null, null));
+                                SendStreamMessage(TCPSocket, new Message(MessageType.TEXT, null, Resourсes.USERNAME, messageText, null, null));
                             }
                             //Message m = ReceiveMessage(TCPSocket);
                             //HandleMessage(m);
@@ -195,7 +303,7 @@ namespace TCPClient
                     TCPSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                     TCPSocket.Connect(TCPEndPoint);
                     Console.WriteLine(Resourсes.CONNECTING_PHRASE);
-                    SendMessage(TCPSocket, new Message(MessageType.NEW_USER_CONNECTED, null, Resourсes.USERNAME, null, null, null));
+                    SendStreamMessage(TCPSocket, new Message(MessageType.NEW_USER_CONNECTED, null, Resourсes.USERNAME, null, null, null));
                     Message m = ReceiveMessage(TCPSocket, buffer);
                     HandleMessage(TCPSocket, m, ref buffer);
                 }

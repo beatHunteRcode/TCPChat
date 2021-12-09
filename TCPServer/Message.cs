@@ -10,6 +10,7 @@ namespace TCPServer
 	public class Message
 	{
 		public MessageType Type { get; set; }
+		public int Length { get; set; }
 		public string Time { get; set; }
 		public string UserName { get; set; }
 		public string Text { get; set; }
@@ -24,6 +25,7 @@ namespace TCPServer
 			byte[] attachedFileData)
 		{
 			Type = messageType;
+			Length = 0;
 			Time = messageTime;
 			UserName = userName;
 			Text = messageText;
